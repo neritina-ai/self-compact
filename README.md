@@ -65,15 +65,14 @@ Flags:
 | `--dry-run` | Print the resolved target window and the command that would be injected, but don't inject. |
 | `--list` | List all visible terminal windows the script can see. |
 | `--hwnd N` | Skip auto-detection and target HWND `N`. |
-| `--no-enter` | Paste the command but don't press Enter — useful for verifying the paste path without actually firing the slash command. |
+| `--no-enter` | Type the command but don't press Enter — useful for verifying injection without firing the slash command. |
 | `--activate-delay` | Seconds to wait after activating the window (default `0.25`). Raise if injection happens before the window has focus. |
-| `--paste-delay` | Seconds between paste and Enter (default `0.10`). |
 
 ## How it works
 
 1. Enumerate visible top-level windows and keep ones whose window class is `CASCADIA_HOSTING_WINDOW_CLASS` or `ConsoleWindowClass`.
 2. Pick a candidate: single match wins; otherwise prefer the foreground window, else a window whose title contains `claude` or the current cwd basename.
-3. Save the current clipboard, write `/compact "<prompt>"` to it, bring the target window forward with `SetForegroundWindow` (using `AttachThreadInput` to bypass focus-stealing restrictions), send Ctrl+V then Enter via `pywinauto.keyboard.send_keys`, restore the clipboard.
+3. Bring the target window forward with `SetForegroundWindow` (using `AttachThreadInput` to bypass focus-stealing restrictions), then type `/compact "<prompt>"` + Enter via `pywinauto.keyboard.send_keys` (a single atomic `SendInput` batch — no clipboard involvement).
 4. The slash command lands in Claude Code's input queue. Claude Code processes it once the current model turn ends, which is why the skill instructions tell the model to **end its turn immediately after a successful injection**.
 
 The process tree doesn't help locate the terminal in modern Windows Terminal because shells launched via the "Default Terminal Application" setting are children of `explorer.exe`, not `WindowsTerminal.exe` — Windows Terminal hosts them via ConPTY rather than spawning them. That's why detection is window-class based rather than process-ancestor based.
@@ -81,7 +80,7 @@ The process tree doesn't help locate the terminal in modern Windows Terminal bec
 ## Caveats
 
 - Multiple Windows Terminal windows: detection falls back to "foreground window" or "title contains keyword". If neither disambiguates, the script exits with the candidate list — re-run with `--hwnd N`.
-- Pending text in Claude Code's input box at injection time: the pasted `/compact` is appended, which means the input no longer starts with `/` and Claude Code treats it as a normal user message instead of a slash command. Workflows using this skill should keep the input box empty (the typical autonomous case).
+- Pending text in Claude Code's input box at injection time: the typed `/compact` is appended after whatever is already there, so the input no longer starts with `/` and Claude Code treats it as a normal user message instead of a slash command. Workflows using this skill should keep the input box empty (the typical autonomous case).
 - Focus theft: another foreground app between activation and keystroke send will swallow the keys. Raise `--activate-delay` if you see flaky results.
 
 ## License

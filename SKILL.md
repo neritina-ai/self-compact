@@ -43,7 +43,7 @@ The summary prompt is optional but strongly recommended — it tells the post-co
 - `--dry-run` — print target + command, no injection. Use first if you're unsure.
 - `--list` — list candidate terminal windows.
 - `--hwnd N` — target a specific HWND (use `--list` to find it).
-- `--no-enter` — paste but don't press Enter (test the paste mechanism).
+- `--no-enter` — type the command but don't press Enter (test injection without firing).
 
 ## After invoking
 

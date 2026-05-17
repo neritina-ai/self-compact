@@ -9,14 +9,13 @@
 """
 self-compact: inject `/compact` into the active Claude Code terminal.
 
-The script identifies the Windows Terminal (or legacy conhost) window hosting
-the Claude Code session that spawned this process, brings it to the foreground,
-and pastes `/compact "<prompt>"` followed by Enter. Because slash commands are
-processed by Claude Code (not the model), the command is queued and executed
-once the current turn ends.
+Fire-and-forget. The script types `/compact "<prompt>"` + Enter into the
+hosting Windows Terminal and exits immediately. Claude Code processes the
+slash command after the current model turn ends, so the model side must
+end its turn right after this script returns.
 
 Usage:
-    uv run --script compact.py ["summary prompt"] [--hwnd N] [--list] [--dry-run]
+    uv run --script compact.py ["summary prompt"]
 """
 
 from __future__ import annotations
@@ -36,7 +35,6 @@ for _stream in (sys.stdout, sys.stderr):
     except Exception:
         pass
 
-import win32clipboard
 import win32con
 import win32gui
 import win32process
@@ -136,43 +134,29 @@ def activate(hwnd: int) -> None:
             user32.AttachThreadInput(cur_thread, fg_thread, False)
 
 
-def get_clipboard_text() -> str | None:
-    try:
-        win32clipboard.OpenClipboard()
-    except Exception:
-        return None
-    try:
-        try:
-            return win32clipboard.GetClipboardData(win32con.CF_UNICODETEXT)
-        except TypeError:
-            return None
-    finally:
-        try:
-            win32clipboard.CloseClipboard()
-        except Exception:
-            pass
+_SENDKEYS_META = {
+    "{": "{{}",
+    "}": "{}}",
+    "(": "{(}",
+    ")": "{)}",
+    "+": "{+}",
+    "^": "{^}",
+    "%": "{%}",
+    "~": "{~}",
+    "[": "{[}",
+    "]": "{]}",
+}
 
 
-def set_clipboard_text(text: str) -> None:
-    for _ in range(5):
-        try:
-            win32clipboard.OpenClipboard()
-            try:
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardData(win32con.CF_UNICODETEXT, text)
-                return
-            finally:
-                win32clipboard.CloseClipboard()
-        except Exception:
-            time.sleep(0.05)
-    raise RuntimeError("could not open clipboard after 5 retries")
+def escape_for_send_keys(s: str) -> str:
+    """Escape pywinauto.send_keys meta characters so the string types literally."""
+    return "".join(_SENDKEYS_META.get(ch, ch) for ch in s)
 
 
 def build_command(prompt: str) -> str:
     if not prompt:
         return "/compact"
-    escaped = prompt.replace("\\", "\\\\").replace('"', '\\"')
-    return f'/compact "{escaped}"'
+    return f'/compact "{prompt}"'
 
 
 def main() -> int:
@@ -202,19 +186,13 @@ def main() -> int:
     parser.add_argument(
         "--no-enter",
         action="store_true",
-        help="Paste the command but do not press Enter (useful for testing)",
+        help="Type the command but do not press Enter (useful for testing)",
     )
     parser.add_argument(
         "--activate-delay",
         type=float,
         default=0.25,
-        help="Seconds to wait after activating the window",
-    )
-    parser.add_argument(
-        "--paste-delay",
-        type=float,
-        default=0.10,
-        help="Seconds to wait between paste and Enter",
+        help="Seconds to wait after activating the window (default: 0.25)",
     )
     args = parser.parse_args()
 
@@ -254,22 +232,13 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    backup = get_clipboard_text()
-    try:
-        set_clipboard_text(command)
-        activate(target.hwnd)
-        time.sleep(args.activate_delay)
-        send_keys("^v")
-        time.sleep(args.paste_delay)
-        if not args.no_enter:
-            send_keys("{ENTER}")
-            time.sleep(0.05)
-    finally:
-        if backup is not None:
-            try:
-                set_clipboard_text(backup)
-            except Exception:
-                pass
+    activate(target.hwnd)
+    time.sleep(args.activate_delay)
+
+    keys = escape_for_send_keys(command)
+    if not args.no_enter:
+        keys += "{ENTER}"
+    send_keys(keys, with_spaces=True)
 
     print("injected.")
     return 0
