@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "self-compact",
+  "description": "Single-plugin marketplace for the self-compact skill",
+  "owner": {
+    "name": "Neritina AI"
+  },
+  "plugins": [
+    {
+      "name": "self-compact",
+      "description": "Lets the model proactively trigger Claude Code's /compact from inside its own turn. Windows-only — injects keystrokes into the hosting Windows Terminal via pywinauto, then a detached watcher tails the session JSONL and types 'compact done' to resume the conversation.",
+      "author": {
+        "name": "Neritina AI"
+      },
+      "category": "productivity",
+      "source": ".",
+      "homepage": "https://github.com/neritina-ai/self-compact",
+      "license": "MIT"
+    }
+  ]
+}

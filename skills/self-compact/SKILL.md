@@ -24,19 +24,23 @@ This skill exists for autonomous workflows where the user isn't sitting at the k
 
 ## How to invoke
 
-Run from any working directory (the script auto-locates the hosting Windows Terminal):
+The script lives next to this `SKILL.md` as `compact.py`. Use the **base directory for this skill** (Claude Code shows it in the skill's system reminder when the skill loads) as `<skill-dir>` below, and run from any working directory — the script auto-locates the hosting Windows Terminal.
+
+PowerShell:
 
 ```
-uv run --script "$env:USERPROFILE\.claude\skills\self-compact\compact.py" "<summary prompt>"
+uv run --script "<skill-dir>/compact.py" "<summary prompt>"
 ```
 
-Bash / WSL form:
+Bash / WSL:
 
 ```
-uv run --script "$HOME/.claude/skills/self-compact/compact.py" "<summary prompt>"
+uv run --script "<skill-dir>/compact.py" "<summary prompt>"
 ```
 
-The summary prompt is optional but strongly recommended — it tells the post-compact model what to preserve. Example: `"keep the project goal, file layout, and remaining TODOs; drop tool output from earlier exploration"`.
+Do not hardcode `~/.claude/skills/self-compact/compact.py` — when installed as a plugin the skill lives under `~/.claude/plugins/marketplaces/<marketplace>/skills/self-compact/`, not the bare skills dir.
+
+The summary prompt is optional. If you write one, stay at the category level — `"keep the project goal, file layout, and remaining TODOs; drop tool output from earlier exploration"` is the right shape. Don't restate specific facts, paths, or directives from the conversation: the default summarization already preserves user instructions and pending work, so the prompt is for steering, not transcription. Shorter is safer — every detail you write here is a detail you can get wrong, and a short category-level hint is often better than a long specific one (or no prompt at all).
 
 ### Useful flags
 
@@ -47,14 +51,19 @@ The summary prompt is optional but strongly recommended — it tells the post-co
 
 ## After invoking
 
-The script reports `injected.` on success. At that point `/compact "..."` is sitting in Claude Code's input queue.
+The script prints `injected.` once `/compact "..."` is queued in Claude Code's input, then `watcher spawned in its own console.` — a separate console window opens that explains itself and tails the current session's JSONL for the compact-completion marker. The extra window is the price of reliability; we tried hiding it with pythonw and it was too fragile.
 
-**You must end your turn immediately after a successful injection.** Do not make further tool calls, do not write more text. The queued slash command fires only when the current turn ends. If you keep working, you'll add to the transcript that's about to be compacted, wasting the injection.
-
-A good last line is one sentence stating you've queued the compaction.
+On normal completion, the watcher types `compact done` + Enter into the same terminal (which arrives as your next user prompt) and closes itself. Treat that `compact done` message as the cue to resume work with the freshly summarized context.
 
 ## Failure modes
 
 - **"could not locate a Claude Code terminal window"** — running in a headless / non-Windows environment, or no visible terminal. Skill can't work here; surface the failure to the user.
 - **Multiple candidates, no match** — script lists them and exits. Re-run with `--hwnd N` for the right one.
 - **Injection succeeds but no compaction happens** — focus was stolen before Enter landed, or Claude Code's input wasn't empty. Retry once; if still failing, surface to the user.
+- **No `compact done` prompt arrives** — the watcher's detection or injection failed, or the watcher already exited. Its log lives at `%TEMP%\self-compact-watcher.log`.
+- **A stuck watcher needs to be killed manually** — just close its console window (it has a self-describing title). Or list and kill via:
+  ```powershell
+  Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Where-Object { $_.CommandLine -like '*compact.py*--watch*' } |
+    ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+  ```

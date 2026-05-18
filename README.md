@@ -22,40 +22,29 @@ This skill is the third option: the model decides on its own that compaction is 
 
 ## Install
 
-Clone the repo straight into your Claude Code skills directory:
+Inside Claude Code, register this repo as a plugin marketplace and install the skill:
 
-**PowerShell**
-
-```powershell
-git clone https://github.com/neritina-ai/self-compact "$env:USERPROFILE\.claude\skills\self-compact"
+```
+/plugin marketplace add neritina-ai/self-compact
+/plugin install self-compact@self-compact
 ```
 
-**Bash / Git Bash**
+The first command points Claude Code at this repo's `.claude-plugin/marketplace.json`; the second installs the bundled `self-compact` skill. The next session will pick up the skill via its `SKILL.md` frontmatter and use it when the description matches.
 
-```bash
-git clone https://github.com/neritina-ai/self-compact "$HOME/.claude/skills/self-compact"
-```
-
-That's it. The next Claude Code session will pick up the skill via `SKILL.md`'s frontmatter and use it when the description matches the situation.
-
-To update later:
-
-```powershell
-git -C "$env:USERPROFILE\.claude\skills\self-compact" pull
-```
-
-To uninstall:
-
-```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\skills\self-compact"
-```
+To update later, re-run `/plugin marketplace add neritina-ai/self-compact` (it refreshes) or use `/plugin update`. To uninstall, use `/plugin uninstall self-compact@self-compact`.
 
 ## Manual use
 
-You can also invoke the script directly without going through the skill:
+You can also invoke the script directly without going through the skill. The installed path depends on the marketplace name — find it with:
 
 ```powershell
-uv run --script "$env:USERPROFILE\.claude\skills\self-compact\compact.py" "keep the design notes; drop tool output"
+Get-ChildItem -Recurse -Filter compact.py "$env:USERPROFILE\.claude\plugins\marketplaces" | Select-Object FullName
+```
+
+Then run it with `uv`:
+
+```powershell
+uv run --script "<full-path-from-above>" "keep the design notes; drop tool output"
 ```
 
 Flags:
