@@ -13,7 +13,7 @@
         "name": "Neritina AI"
       },
       "category": "productivity",
-      "source": ".",
+      "source": "./plugins/self-compact",
       "homepage": "https://github.com/neritina-ai/self-compact",
       "license": "MIT"
     }
