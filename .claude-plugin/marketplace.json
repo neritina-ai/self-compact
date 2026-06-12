@@ -8,7 +8,7 @@
   "plugins": [
     {
       "name": "self-compact",
-      "description": "Lets the model proactively trigger Claude Code's /compact from inside its own turn. Windows-only — injects keystrokes into the hosting Windows Terminal via pywinauto, then a detached watcher tails the session JSONL and types 'compact done' to resume the conversation.",
+      "description": "Lets the model proactively trigger Claude Code's /compact from inside its own turn. Windows-only — injects /compact via focus-free console input (works even in an elevated terminal), then a detached sidekick types 'compact done' a few seconds later to resume the conversation after compaction.",
       "author": {
         "name": "Neritina AI"
       },

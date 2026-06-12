@@ -8,22 +8,24 @@
 # ///
 """
 self-compact: inject `/compact` into the active Claude Code terminal, then
-inject a `compact done` follow-up once the compaction finishes.
+inject a `compact done` follow-up so the model resumes after compaction.
 
 Flow:
-  1. Find the live session JSONL (the most-recently-modified file under
-     ~/.claude/projects/<sanitized-cwd>/) and record its current byte size.
-  2. Type `/compact "<prompt>"` + Enter into the hosting Windows Terminal.
-  3. Spawn a watcher (this same script with --watch) in a new console
-     window. The watcher prints an explanatory banner so the user knows
-     what the extra window is for, then tails the session JSONL past the
-     recorded offset looking for a `compact_boundary` / `isCompactSummary`
-     marker.
-  4. Parent exits immediately so Claude Code can process the queued
-     slash command at end-of-turn.
-  5. When the watcher finds the marker, it types `compact done` + Enter
-     into the same terminal so the model is re-prompted after the
-     post-/compact idle state.
+  1. Type `/compact "<prompt>"` + Enter into the hosting terminal. It queues
+     and runs at end-of-turn.
+  2. Spawn a sidekick (this same script with --sidekick) in a new console
+     window. It prints an explanatory banner, waits a few seconds for the
+     model's turn to end (so /compact has dequeued and started compacting),
+     then injects the continuation prompt + Enter and exits.
+  3. Parent exits immediately so Claude Code can process the queued slash
+     command at end-of-turn.
+
+Why a fixed wait, not detecting when /compact finishes: text injected after
+the model's turn ends survives compaction -- it queues behind the running
+/compact and is delivered at the post-compaction idle state. So the sidekick
+needs no marker detection; it only has to wait long enough that the turn has
+ended before injecting. (Injecting DURING the turn would be swallowed by the
+active turn and lost.)
 
 Injection transport:
   Primary path is focus-free console injection -- AttachConsole() to the
@@ -34,7 +36,7 @@ Injection transport:
   silently). Because AttachConsole requires FreeConsole first -- which kills
   the caller's stdout -- the actual attach+write happens in an isolated
   subprocess (this script with --console-inject) whose result is read back
-  from a temp file, so the parent's and watcher's own consoles survive.
+  from a temp file, so the parent's and sidekick's own consoles survive.
   If console injection can't run (no console pid resolved) or fails, we fall
   back to the legacy clipboard Ctrl+V + SetForegroundWindow path.
 
@@ -75,12 +77,11 @@ TERMINAL_CLASSES = {
 }
 
 DEFAULT_CONTINUATION_PROMPT = "compact done"
-DEFAULT_WATCH_TIMEOUT = 600.0
-
-COMPACT_MARKERS = (
-    '"subtype":"compact_boundary"',
-    '"isCompactSummary":true',
-)
+# Seconds the sidekick waits before injecting the continuation. Must outlast
+# the gap between this script returning and the model ending its turn; once the
+# turn has ended, any later injection (even mid-compaction) survives and is
+# delivered at the post-/compact idle state.
+DEFAULT_SIDEKICK_DELAY = 8.0
 
 
 # --- console-injection (AttachConsole + WriteConsoleInputW) plumbing ---------
@@ -493,55 +494,27 @@ def build_command(prompt: str) -> str:
     return f'/compact "{prompt}"'
 
 
-def project_transcript_dir(cwd: str) -> str:
-    """Map cwd to ~/.claude/projects/<sanitized>/ — Claude Code's per-project JSONL dir."""
-    sanitized = cwd.replace("\\", "-").replace(":", "-").replace("/", "-")
-    return os.path.join(os.path.expanduser("~"), ".claude", "projects", sanitized)
+def sidekick_log_path() -> str:
+    return os.path.join(tempfile.gettempdir(), "self-compact-sidekick.log")
 
 
-def session_jsonl_path(project_dir: str) -> str | None:
-    """Return the most-recently-modified .jsonl in project_dir (the live session)."""
-    if not os.path.isdir(project_dir):
-        return None
-    best: tuple[float, str] | None = None
-    for name in os.listdir(project_dir):
-        if not name.endswith(".jsonl"):
-            continue
-        p = os.path.join(project_dir, name)
-        try:
-            mtime = os.path.getmtime(p)
-        except OSError:
-            continue
-        if best is None or mtime > best[0]:
-            best = (mtime, p)
-    return best[1] if best else None
-
-
-def watcher_log_path() -> str:
-    return os.path.join(tempfile.gettempdir(), "self-compact-watcher.log")
-
-
-def spawn_watcher(
+def spawn_sidekick(
     hwnd: int,
     console_pid: int | None,
-    session_file: str,
-    baseline_offset: int,
-    timeout: float,
     continuation_prompt: str,
+    delay: float,
 ) -> None:
-    """Spawn the watcher in its own visible console window so the user can see
-    what it's waiting on. The watcher survives parent exit via its own process
-    group and its own console."""
+    """Spawn the sidekick in its own visible console window so the user can see
+    what it's doing. It survives parent exit via its own process group and its
+    own console."""
     args = [
         sys.executable,
         os.path.abspath(__file__),
-        "--watch",
+        "--sidekick",
         "--hwnd", str(hwnd),
         "--console-pid", str(console_pid if console_pid else 0),
-        "--session-file", session_file,
-        "--baseline-offset", str(baseline_offset),
-        "--timeout", str(timeout),
         "--continuation-prompt", continuation_prompt,
+        "--sidekick-delay", str(delay),
     ]
 
     creationflags = 0
@@ -559,19 +532,19 @@ def spawn_watcher(
     )
 
 
-def run_watcher(
+def run_sidekick(
     hwnd: int,
     console_pid: int | None,
-    session_file: str,
-    baseline_offset: int,
-    timeout: float,
     continuation_prompt: str,
+    delay: float,
 ) -> int:
-    """Tail `session_file` past `baseline_offset` looking for a /compact marker,
-    then inject the continuation prompt. Prints progress to its own console and
-    appends to the log file."""
+    """Wait `delay` seconds for the model's turn to end (so /compact has
+    dequeued and started compacting), then inject the continuation prompt and
+    exit. No marker detection: text injected after turn-end survives compaction
+    and re-prompts the model at the post-/compact idle state. Prints progress to
+    its own console and appends to the log file."""
 
-    # CREATE_NEW_CONSOLE gives the watcher its own console window, but Python's
+    # CREATE_NEW_CONSOLE gives the sidekick its own console window, but Python's
     # sys.stdout/stderr were inherited from the parent (the shell that ran
     # `uv run`) — they point back at the launcher, not the new console. Reopen
     # them against CONOUT$ so the banner and progress prints actually appear in
@@ -583,11 +556,11 @@ def run_watcher(
     except Exception:
         pass
 
-    log_path = watcher_log_path()
+    log_path = sidekick_log_path()
 
     def emit(msg: str) -> None:
         ts = time.strftime("%Y-%m-%d %H:%M:%S")
-        line = f"[{ts}] [watcher pid={os.getpid()}] {msg}"
+        line = f"[{ts}] [sidekick pid={os.getpid()}] {msg}"
         try:
             print(line, flush=True)
         except Exception:
@@ -601,70 +574,42 @@ def run_watcher(
     # Banner — explains the extra window to the user.
     try:
         try:
-            ctypes.windll.kernel32.SetConsoleTitleW(f"self-compact watcher (pid {os.getpid()})")
+            ctypes.windll.kernel32.SetConsoleTitleW(f"self-compact sidekick (pid {os.getpid()})")
         except Exception:
             pass
         print("=" * 70, flush=True)
-        print(" self-compact watcher", flush=True)
+        print(" self-compact sidekick", flush=True)
         print("=" * 70, flush=True)
-        print(" Waiting for Claude Code's /compact to finish, then I'll type", flush=True)
-        print(f" {continuation_prompt!r} + Enter into the Claude Code terminal", flush=True)
-        print(" so the model resumes work.", flush=True)
+        print(f" In ~{delay:.0f}s I'll type {continuation_prompt!r} + Enter into the", flush=True)
+        print(" Claude Code terminal so the model resumes after /compact.", flush=True)
         print("", flush=True)
         print(" You can leave this window alone — it closes itself when done.", flush=True)
-        print(f" If it's still here long after /compact finished, close it manually.", flush=True)
         print(f"   target hwnd: {hwnd}", flush=True)
         print(f"   console pid: {console_pid}", flush=True)
-        print(f"   session:     {session_file}", flush=True)
-        print(f"   timeout:     {timeout:.0f}s", flush=True)
+        print(f"   delay:       {delay:.0f}s", flush=True)
         print(f"   log:         {log_path}", flush=True)
         print("=" * 70, flush=True)
     except Exception:
         pass
 
-    emit(f"started hwnd={hwnd} console_pid={console_pid} session_file={session_file} baseline_offset={baseline_offset} timeout={timeout}s")
+    emit(f"started hwnd={hwnd} console_pid={console_pid} delay={delay}s")
     emit(f"continuation prompt: {continuation_prompt!r}")
+    emit(f"sleeping {delay}s for turn-end, then injecting (no marker detection)")
+    time.sleep(delay)
 
-    start = time.time()
-    poll_interval = 2.0
-    settle_delay = 2.0
-    offset = baseline_offset
-
-    while time.time() - start < timeout:
-        try:
-            if os.path.exists(session_file):
-                size = os.path.getsize(session_file)
-                if size > offset:
-                    with open(session_file, "rb") as fh:
-                        fh.seek(offset)
-                        chunk = fh.read(size - offset)
-                    text = chunk.decode("utf-8", errors="replace")
-                    hit = next((m for m in COMPACT_MARKERS if m in text), None)
-                    if hit:
-                        emit(f"compact marker detected: {hit!r} (read {len(chunk)} bytes)")
-                        time.sleep(settle_delay)
-                        if not win32gui.IsWindow(hwnd):
-                            emit(f"target hwnd {hwnd} no longer valid; giving up")
-                            return 2
-                        try:
-                            ok, how = inject(
-                                hwnd, console_pid, continuation_prompt, with_enter=True
-                            )
-                        except Exception as e:
-                            emit(f"inject failed: {e!r}")
-                            return 3
-                        if not ok:
-                            emit(f"inject did not succeed (via {how})")
-                            return 3
-                        emit(f"continuation prompt injected via {how}. exiting.")
-                        return 0
-                    offset = size
-        except Exception as e:
-            emit(f"poll error: {e!r}")
-        time.sleep(poll_interval)
-
-    emit(f"timed out after {timeout}s with no compact marker")
-    return 1
+    if not win32gui.IsWindow(hwnd):
+        emit(f"target hwnd {hwnd} no longer valid; giving up")
+        return 2
+    try:
+        ok, how = inject(hwnd, console_pid, continuation_prompt, with_enter=True)
+    except Exception as e:
+        emit(f"inject failed: {e!r}")
+        return 3
+    if not ok:
+        emit(f"inject did not succeed (via {how})")
+        return 3
+    emit(f"continuation prompt injected via {how} at {time.strftime('%H:%M:%S')}. exiting.")
+    return 0
 
 
 def main() -> int:
@@ -709,20 +654,14 @@ def main() -> int:
         help="Seconds between the text write and the Enter write, console path (default: 0.15)",
     )
     parser.add_argument(
-        "--no-watch",
+        "--no-sidekick",
         action="store_true",
-        help="Skip spawning the post-/compact watcher (old fire-and-forget behavior)",
+        help="Skip spawning the post-/compact sidekick (old fire-and-forget behavior)",
     )
     parser.add_argument(
         "--continuation-prompt",
         default=DEFAULT_CONTINUATION_PROMPT,
-        help=f"Prompt the watcher types after /compact finishes (default: {DEFAULT_CONTINUATION_PROMPT!r})",
-    )
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=DEFAULT_WATCH_TIMEOUT,
-        help=f"Watcher: max seconds to wait for /compact (default: {DEFAULT_WATCH_TIMEOUT})",
+        help=f"Prompt the sidekick types after /compact (default: {DEFAULT_CONTINUATION_PROMPT!r})",
     )
     parser.add_argument(
         "--no-console",
@@ -730,9 +669,9 @@ def main() -> int:
         help="Skip console (AttachConsole) injection; use only the clipboard path",
     )
     parser.add_argument(
-        "--watch",
+        "--sidekick",
         action="store_true",
-        help="Internal: run as the watcher subprocess",
+        help="Internal: run as the sidekick subprocess",
     )
     parser.add_argument(
         "--console-inject",
@@ -761,15 +700,11 @@ def main() -> int:
         help="Internal (--console-inject): file to write the injection result to",
     )
     parser.add_argument(
-        "--session-file",
-        default=None,
-        help="Internal (watcher): JSONL session file to tail for compact markers",
-    )
-    parser.add_argument(
-        "--baseline-offset",
-        type=int,
-        default=0,
-        help="Internal (watcher): byte offset in session-file to start tailing from",
+        "--sidekick-delay",
+        type=float,
+        default=DEFAULT_SIDEKICK_DELAY,
+        help="Seconds the sidekick waits for turn-end before injecting the "
+        f"continuation (default: {DEFAULT_SIDEKICK_DELAY})",
     )
     args = parser.parse_args()
 
@@ -785,17 +720,15 @@ def main() -> int:
             result_file=args.result_file,
         )
 
-    if args.watch:
-        if args.hwnd is None or args.session_file is None:
-            print("ERROR: --watch requires --hwnd and --session-file", file=sys.stderr)
+    if args.sidekick:
+        if args.hwnd is None:
+            print("ERROR: --sidekick requires --hwnd", file=sys.stderr)
             return 2
-        return run_watcher(
+        return run_sidekick(
             args.hwnd,
             args.console_pid,
-            args.session_file,
-            args.baseline_offset,
-            args.timeout,
             args.continuation_prompt,
+            args.sidekick_delay,
         )
 
     candidates = enumerate_terminal_windows()
@@ -836,10 +769,6 @@ def main() -> int:
     if args.dry_run:
         return 0
 
-    project_dir = project_transcript_dir(os.getcwd())
-    session_file = session_jsonl_path(project_dir)
-    baseline_offset = os.path.getsize(session_file) if session_file else 0
-
     ok, how = inject(
         target.hwnd,
         console_pid,
@@ -853,26 +782,16 @@ def main() -> int:
         return 3
     print(f"injected via {how}.")
 
-    if args.no_enter or args.no_watch:
+    if args.no_enter or args.no_sidekick:
         return 0
 
-    if session_file is None:
-        print(
-            "WARNING: could not locate a session JSONL in "
-            f"{project_dir!r}; watcher not spawned.",
-            file=sys.stderr,
-        )
-        return 0
-
-    spawn_watcher(
+    spawn_sidekick(
         target.hwnd,
         console_pid,
-        session_file,
-        baseline_offset,
-        args.timeout,
         args.continuation_prompt,
+        args.sidekick_delay,
     )
-    print(f"watcher spawned in its own console. log: {watcher_log_path()}")
+    print(f"sidekick spawned in its own console. log: {sidekick_log_path()}")
     return 0
 
 

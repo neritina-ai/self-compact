@@ -49,12 +49,16 @@ The summary prompt is optional. If you write one, stay at the category level —
 - `--hwnd N` — target a specific HWND (use `--list` to find it).
 - `--no-enter` — type the command but don't press Enter (test injection without firing).
 - `--no-console` — skip console (AttachConsole) injection and use only the clipboard path.
+- `--sidekick-delay N` — seconds the sidekick waits before injecting `compact done` (default 8). Raise it if your turn won't end promptly.
+- `--no-sidekick` — inject `/compact` only; don't spawn the resume sidekick (fire-and-forget).
 
 ## After invoking
 
-The script prints `injected via console (pid N).` (or `injected via clipboard fallback (...)`) once `/compact "..."` is queued in Claude Code's input, then `watcher spawned in its own console.` — a separate console window opens that explains itself and tails the current session's JSONL for the compact-completion marker. The extra window is the price of reliability; we tried hiding it with pythonw and it was too fragile.
+The script prints `injected via console (pid N).` (or `injected via clipboard fallback (...)`) once `/compact "..."` is queued in Claude Code's input, then `sidekick spawned in its own console.` — a separate console window opens that explains itself. The extra window is the price of reliability; we tried hiding it with pythonw and it was too fragile.
 
-On normal completion, the watcher types `compact done` + Enter into the same terminal (which arrives as your next user prompt) and closes itself. Treat that `compact done` message as the cue to resume work with the freshly summarized context.
+The sidekick waits a few seconds (default 8) for your turn to end — long enough that `/compact` has dequeued and started compacting — then types `compact done` + Enter into the same terminal and closes itself. It does **not** watch for compaction to finish: text injected after your turn ends queues behind the running `/compact` and is delivered once the post-compaction idle state is reached. (Injecting *during* your turn would be swallowed by the active turn, which is why the sidekick waits first.) Treat that `compact done` message, which arrives as your next user prompt, as the cue to resume work with the freshly summarized context.
+
+**End your turn immediately after invoking this skill.** The sidekick's fixed wait assumes your turn ends promptly; if you keep working past the delay, the `compact done` injection could land mid-turn and be lost. Don't queue more tool calls after the skill returns — just stop.
 
 ## Injection transport
 
@@ -70,10 +74,10 @@ Either way the script verifies the write succeeded before reporting success, ins
 - **"could not locate a Claude Code terminal window"** — running in a headless / non-Windows environment, or no visible terminal. Skill can't work here; surface the failure to the user.
 - **Multiple candidates, no match** — script lists them and exits. Re-run with `--hwnd N` for the right one.
 - **Injection succeeds but no compaction happens** — focus was stolen before Enter landed, or Claude Code's input wasn't empty. Retry once; if still failing, surface to the user.
-- **No `compact done` prompt arrives** — the watcher's detection or injection failed, or the watcher already exited. Its log lives at `%TEMP%\self-compact-watcher.log`.
-- **A stuck watcher needs to be killed manually** — just close its console window (it has a self-describing title). Or list and kill via:
+- **No `compact done` prompt arrives** — the sidekick's injection failed, or it fired mid-turn (you kept working past the delay) and was swallowed. Its log lives at `%TEMP%\self-compact-sidekick.log`.
+- **A stuck sidekick needs to be killed manually** — just close its console window (it has a self-describing title). Or list and kill via:
   ```powershell
   Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
-    Where-Object { $_.CommandLine -like '*compact.py*--watch*' } |
+    Where-Object { $_.CommandLine -like '*compact.py*--sidekick*' } |
     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
   ```
