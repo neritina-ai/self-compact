@@ -48,12 +48,22 @@ The summary prompt is optional. If you write one, stay at the category level —
 - `--list` — list candidate terminal windows.
 - `--hwnd N` — target a specific HWND (use `--list` to find it).
 - `--no-enter` — type the command but don't press Enter (test injection without firing).
+- `--no-console` — skip console (AttachConsole) injection and use only the clipboard path.
 
 ## After invoking
 
-The script prints `injected.` once `/compact "..."` is queued in Claude Code's input, then `watcher spawned in its own console.` — a separate console window opens that explains itself and tails the current session's JSONL for the compact-completion marker. The extra window is the price of reliability; we tried hiding it with pythonw and it was too fragile.
+The script prints `injected via console (pid N).` (or `injected via clipboard fallback (...)`) once `/compact "..."` is queued in Claude Code's input, then `watcher spawned in its own console.` — a separate console window opens that explains itself and tails the current session's JSONL for the compact-completion marker. The extra window is the price of reliability; we tried hiding it with pythonw and it was too fragile.
 
 On normal completion, the watcher types `compact done` + Enter into the same terminal (which arrives as your next user prompt) and closes itself. Treat that `compact done` message as the cue to resume work with the freshly summarized context.
+
+## Injection transport
+
+Keystrokes reach Claude Code by one of two paths, tried in order:
+
+1. **Console injection (primary, focus-free).** The script finds the hosting `claude.exe` by walking its own process ancestry, then in a short-lived isolated subprocess does `AttachConsole(claude_pid)` + `WriteConsoleInputW` straight into that console's input buffer. No window focus or foreground switch is needed, it doesn't go through an IME, and it works even when Claude Code runs in an **elevated** legacy conhost (where the clipboard path silently fails because a background process can't `SetForegroundWindow`). The attach happens in a subprocess because `AttachConsole` requires `FreeConsole` first, which would otherwise kill the parent's stdout.
+2. **Clipboard paste (fallback).** If no console pid can be resolved or the console write fails, it falls back to clipboard `Ctrl+V` + `SetForegroundWindow`. Use `--no-console` to force this path.
+
+Either way the script verifies the write succeeded before reporting success, instead of blindly printing `injected.`.
 
 ## Failure modes
 
