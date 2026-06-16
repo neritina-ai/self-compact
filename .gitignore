@@ -6,3 +6,6 @@ __pycache__/
 .idea/
 .vscode/
 *.log
+
+# Go build artifact
+self-compact.exe

@@ -1,7 +1,7 @@
 {
   "name": "self-compact",
   "description": "Lets the model proactively trigger Claude Code's /compact from inside its own turn. Windows-only — injects /compact via focus-free console input (works even in an elevated terminal), then a detached sidekick types 'compact done' a few seconds later to resume the conversation after compaction.",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "author": {
     "name": "Neritina AI"
   },
