@@ -40,7 +40,25 @@ Make sure `~/go/bin` (the default `GOBIN`) is on your `PATH` so the skill can fi
 
 The first command points Claude Code at this repo's `.claude-plugin/marketplace.json`; the second installs the bundled `self-compact` skill. The next session picks up the skill via its `SKILL.md` and uses it when the description matches.
 
-To update: re-run `go install …@latest` for the binary and `/plugin update` for the skill. To uninstall: `/plugin uninstall self-compact@self-compact`, then delete `~/go/bin/self-compact.exe`.
+### To update
+
+Refresh the binary:
+
+```
+go install github.com/neritina-ai/self-compact/cmd/self-compact@latest
+```
+
+Then in Claude Code, open the `/plugins` menu, select this **self-compact** skill, and choose **Update now**.
+
+### To uninstall
+
+In Claude Code, open the `/plugins` menu, select this **self-compact** skill, and choose **Uninstall**.
+
+Then remove the binary:
+
+```
+rm ~/go/bin/self-compact.exe
+```
 
 ## How it works
 
