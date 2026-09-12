@@ -1,11 +1,6 @@
-__pycache__/
-*.py[cod]
-*.egg-info/
-.venv/
-.uv/
 .idea/
 .vscode/
 *.log
 
-# Go build artifact
-self-compact.exe
+# Go build artifacts
+*.exe
