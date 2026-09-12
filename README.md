@@ -71,9 +71,12 @@ Go rebuilds by itself whenever the source changes, so there is no second step.
 npx skills remove self-compact -g
 ```
 
-Two files are left behind, harmless but easy to delete:
-`%LOCALAPPDATA%\self-compact\self-compact-sidekick.exe` and
-`%TEMP%\self-compact-sidekick.log`.
+Everything self-compact writes lives in one directory, which nothing else uses
+and which you can delete at any time:
+
+```powershell
+Remove-Item -Recurse -Force $env:LOCALAPPDATA\self-compact
+```
 
 ### Coming from 0.3.x
 
@@ -100,15 +103,21 @@ with `rm ~/go/bin/self-compact.exe`.
    detached and windowless (`DETACHED_PROCESS | CREATE_NO_WINDOW`), handing it the
    resolved pid. The sidekick waits 8 seconds for the turn to end, then injects
    `compact done` so the run resumes with the fresh summary. It logs to
-   `%TEMP%\self-compact-sidekick.log`.
+   `sidekick.log` in that same directory.
 
 Locating the host by process ancestry (rather than enumerating windows) is what
 makes the injection focus-free and elevation-tolerant.
 
-The sidekick runs from a copy because `go run` builds to a temporary directory
-and deletes it the moment the program exits: a sidekick started from there would
-hold that file open, and `go run` would fail its cleanup and exit non-zero even
-though the injection had worked. Copying ~3 MB costs about 3 ms.
+The sidekick runs from a copy because the program cannot count on its own
+executable outliving it. Whenever the source has changed, `go run` links into a
+fresh temporary directory and deletes it the moment the program exits: a sidekick
+started from there would hold that file open, `go run`'s cleanup would fail, and
+the command would exit non-zero even though the injection had worked. When the
+source is unchanged Go runs the linked executable straight out of its build
+cache, which does survive — but the program has no way to tell the two cases
+apart, and the build cache is not somewhere anything should be spawned from in
+any event. So it keeps its own copy. That copy is a single file, rewritten on
+each run; copying ~2 MB costs about 3 ms.
 
 ## Caveats
 
@@ -138,7 +147,7 @@ npx skills add . --skill self-compact -a claude-code -g -y
 To check that it can find the host console without actually compacting anything:
 
 ```
-cd skills/self-compact/scripts && go run . --dry-run
+go -C skills/self-compact/scripts run . --dry-run
 ```
 
 Written by **Claude Opus 5.0** (model ID `claude-opus-5`), Anthropic's Claude

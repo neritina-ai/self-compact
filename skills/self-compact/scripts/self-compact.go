@@ -58,6 +58,9 @@ const (
 	// sidekickExe is the name of the stable copy this program spawns as its
 	// sidekick. See sidekickBinary for why a copy is needed.
 	sidekickExe = "self-compact-sidekick.exe"
+
+	// sidekickLog is the sidekick's log, kept beside it in dataDir.
+	sidekickLog = "sidekick.log"
 )
 
 const usage = `usage (run from this directory):
@@ -178,11 +181,15 @@ func runSidekick(args []string) error {
 	return injErr
 }
 
-// logSidekick appends the sidekick's outcome to the log in %TEMP%. The sidekick
+// logSidekick appends the sidekick's outcome to its log in dataDir. The sidekick
 // is windowless with no usable stdout/stderr, so the log file is the only way to
 // see whether the continuation injection succeeded.
 func logSidekick(pid uint32, injErr error) {
-	path := filepath.Join(os.TempDir(), "self-compact-sidekick.log")
+	dir, err := dataDir()
+	if err != nil {
+		return
+	}
+	path := filepath.Join(dir, sidekickLog)
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return
@@ -210,25 +217,43 @@ func spawnSidekick(pid uint32) error {
 	return cmd.Start()
 }
 
-// sidekickBinary returns a path to this program's executable that will outlive
-// this process, copying the running image there if needed.
+// dataDir is where self-compact keeps the two files it owns: the stable copy of
+// this executable that the sidekick runs from, and the sidekick's log.
 //
-// The copy is the price of `go run`: it builds to a temporary directory and
-// deletes that directory as soon as the program exits. A sidekick launched from
-// there would hold the file open, so the cleanup would fail ("Access is denied")
-// and `go run` would exit non-zero even though the injection worked. Spawning
-// from a stable copy leaves the temporary tree free to be removed on time.
-func sidekickBinary() (string, error) {
-	src, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
-	base, err := os.UserCacheDir() // %LOCALAPPDATA% on Windows
+// os.UserCacheDir() is %LOCALAPPDATA% on Windows, the conventional per-user,
+// per-machine home for a program's own files. Deliberately not a temp
+// directory: the log is the only record of whether the continuation injection
+// worked, and it should still be there when someone goes looking for it.
+func dataDir() (string, error) {
+	base, err := os.UserCacheDir()
 	if err != nil {
 		base = os.TempDir()
 	}
 	dir := filepath.Join(base, "self-compact")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+// sidekickBinary returns a path to this program's executable that will outlive
+// this process, copying the running image there if needed.
+//
+// The copy is the price of `go run`. Whenever the source has changed it links
+// into a temporary directory and deletes that directory as soon as the program
+// exits; a sidekick launched from there would hold the file open, so the cleanup
+// would fail ("Access is denied") and `go run` would exit non-zero even though
+// the injection worked. On an unchanged source Go instead runs the executable
+// out of its build cache, where it does persist -- but there is no way from here
+// to tell the two apart, and the build cache is not somewhere to spawn from
+// regardless. Spawning from a stable copy sidesteps both.
+func sidekickBinary() (string, error) {
+	src, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	dir, err := dataDir()
+	if err != nil {
 		return "", err
 	}
 

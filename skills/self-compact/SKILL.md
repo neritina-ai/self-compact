@@ -11,27 +11,27 @@ This skill is useful for autonomous workflows where the user isn't sitting at th
 
 ## How to invoke
 
-The skill is a small Go program in this skill's `scripts/` directory, run straight from source with `go run .` — nothing is installed or pre-built.
-
-Run it from that directory. In the commands below, replace `<skill-dir>` with this skill's base directory, the one reported when the skill was loaded; forward slashes work on Windows, so `.../.claude/skills/self-compact` is a fine way to write it.
+The skill is a small Go program in this skill's `scripts/` directory, run straight from source — nothing is installed or pre-built.
 
 Compact with no summary prompt:
 
 ```bash
-cd "<skill-dir>/scripts" && go run .
+go -C $HOME/.claude/skills/self-compact/scripts run .
 ```
 
 Compact with a summary prompt, read from stdin:
 
 ```bash
-cd "<skill-dir>/scripts" && go run . - <<'EOF'
+go -C $HOME/.claude/skills/self-compact/scripts run . - <<'EOF'
 keep the project goal, file layout, and remaining TODOs; drop tool output from earlier exploration
 EOF
 ```
 
+Use either line exactly as written; nothing in it needs to be substituted. `$HOME` is expanded by both PowerShell and the Bash tool, and `go -C` enters the skill's own directory, so the command works from wherever the session happens to be and is unaffected by the Go version the current project pins. Should this skill ever be installed somewhere other than the path above, use the base directory reported when it loaded.
+
 Both forms inject the same `/compact` command, so they have the same effect on Claude Code's context. The difference is whether you want to steer the summarization with a prompt or just rely on its default behavior.
 
-The prompt is read from **stdin** (the `-` form), not an argument — this avoids shell quoting, escaping, and length limits. Prefer the Bash-tool heredoc shown above; piping a prompt that contains CJK or special characters through PowerShell 5.1 can mangle the encoding. A bare `go run .` never reads stdin, so it won't block waiting for input.
+The prompt is read from **stdin** (the `-` form), not an argument — this avoids shell quoting, escaping, and length limits. Prefer the Bash-tool heredoc shown above; piping a prompt that contains CJK or special characters through PowerShell 5.1 can mangle the encoding. The form without `-` never reads stdin, so it won't block waiting for input.
 
 The summary prompt is optional. If you write one, stay at the category level — the example above is the right shape. A short category-level hint is often better than a long list of specific facts, paths or directives from the conversation.
 
@@ -58,7 +58,7 @@ That continuation arrives as your next user prompt, and is the cue to resume wor
 **Check the target without compacting.** This resolves the hosting console and reports what it would do, injecting nothing:
 
 ```bash
-cd "<skill-dir>/scripts" && go run . --dry-run
+go -C $HOME/.claude/skills/self-compact/scripts run . --dry-run
 ```
 
 **`no claude.exe ancestor found`** — the command isn't running as a descendant of a console-hosted `claude.exe`. Sessions started with `claude --bg` live behind a private ConPTY and cannot be reached; note that injecting into one of those reports success while nothing actually happens.
@@ -70,4 +70,4 @@ Get-CimInstance Win32_Process -Filter "Name='self-compact-sidekick.exe'" |
   ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
 ```
 
-Its log is at `%TEMP%\self-compact-sidekick.log`.
+Its log is at `%LOCALAPPDATA%\self-compact\sidekick.log`.
