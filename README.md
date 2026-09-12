@@ -45,7 +45,9 @@ npx skills add neritina-ai/self-compact --skill self-compact -a claude-code -g -
 
 The [skills CLI](https://github.com/vercel-labs/skills) can install a skill into
 any agent it knows about; the flags above pin it to a global Claude Code
-install, which is the only one this skill can work in.
+install, which is the only one this skill can work in. Repeat the `-g` on the
+update and uninstall commands below: without it they act on the current project
+instead, and `remove` reports that there is nothing to remove.
 
 That drops the skill in `~/.claude/skills/self-compact/`. The next session picks
 it up, and the model uses it when the description matches — or you can invoke it
@@ -58,7 +60,7 @@ build, so later invocations take about a third of a second.
 ### To update
 
 ```
-npx skills update self-compact
+npx skills update self-compact -g
 ```
 
 Go rebuilds by itself whenever the source changes, so there is no second step.
@@ -66,7 +68,7 @@ Go rebuilds by itself whenever the source changes, so there is no second step.
 ### To uninstall
 
 ```
-npx skills remove self-compact
+npx skills remove self-compact -g
 ```
 
 Two files are left behind, harmless but easy to delete:
